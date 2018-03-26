@@ -9,7 +9,8 @@
 #               ---imports---
 import sys
 import os
-
+import re
+import urllib.parse
 #               ---function definitions---
 
 #       ---functions for error handling---
@@ -32,11 +33,22 @@ def print_usage():
 #param: exeption
 #valid exeptions:   config_file_not_found
 #                   permission_denied
+#                   invalid_name
+#                   invalid_input_format
+#                   name_taken
 def exception_handler(exception="unknown"):
     if exception=="config_file_not_found":
         print("config file not found. run install command again")
-    if exception=="permisson_denied":
+    elif exception=="permisson_denied":
         print("permission denied. run as super user.")
+    elif exception=="invalid_name":
+        print("This is an invalid name for a proxy config. The name may only contain:")
+        print("letters; numbers; hypen")
+        print("And may not be called: 'none' ")
+    elif exception=="invalid_input_format":
+        print("input format is invalid.")
+    elif exception=="name_taken":
+        print("this name is already taken. Choose a different one.")
     else:
         print("unknown exeption: ", exception)
     sys.exit(1)
@@ -61,6 +73,35 @@ def prepend_to_file(fname, data):
         for line in lines: # write old content after new
              f.write(line)
         f.close()
+
+#function: validates if name given is valid for a proxy config.
+#param: name: the name to validate
+def validate_name(name):
+    #regex for Alphanumeric and '-' characters
+    reg = re.compile(r'[\w-]+$')
+    #if invalid
+    if reg.match(name) is None:
+        return False
+    else:
+        if name=="none":
+            return False
+        else:
+            return True
+
+#function: saves proxy config in config folder
+#params: proxy_obj: Proxy object
+#        name: name of config
+def save_proxy(proxy_obj, name):
+    fi = open(os.path.expanduser("~/.proxman-proxies/"+name),"w+")
+    for ptype in proxy_obj.proxy_type:
+        fi.write(ptype+" ")
+    fi.write("\n")
+    fi.write(proxy_obj.proxy_ip+"\n")
+    fi.write(proxy_obj.proxy_port+"\n")
+    if proxy_obj.proxy_user is not None:
+        fi.write(proxy_obj.proxy_user+"\n")
+        fi.write(proxy_obj.proxy_password+"\n")
+    fi.close()
 
 #       ---functions for commands---
 
@@ -114,14 +155,73 @@ def current():
 #function: lists all available proxies
 #params: none
 def list_proxies():
-    #why not use the easy way
+    #why not use the easy way; just list directory.
     os.system("ls ~/.proxman-proxies")
     sys.exit(0)
 
 #function: creates a new proxy configuration
 #params: none; uses sys.argv
 def create():
-    print("create not implemented. exiting.")
+    name=""
+    #if name given as parameter
+    if len(sys.argv) > 2:
+        name = sys.argv[2]
+    else:
+        name = input("Name of config: ")
+    #if the name is invalid; call the exception handler
+    if validate_name(name) == False:
+        exception_handler("invalid_name")
+    #if name is taken call exception handler
+    if os.path.isfile(os.path.expanduser("~/.proxman-proxies/"+name)):
+        exception_handler("name_taken")
+    #get other info:
+    
+    #proxy type
+    proxy_type_in = input("Type of proxy[http;https;ftp;] in a space separated list :")
+    if proxy_type_in=="":
+        exception_handler("invalid_input_format")
+    #check if input is correct; else throw error
+    proxy_type = proxy_type_in.split(" ")
+    for pt in proxy_type:
+        if pt!="http" and pt!="https" and pt!="ftp":
+            exception_handler("invalid_input_format")
+    #split to list
+    
+    
+    #proxy ip
+    proxy_ip = input("proxy ip: ")
+    #check if input matches regex; else throw error
+    reg_proxy_ip = re.compile(r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
+    if reg_proxy_ip.match(proxy_ip) is None:
+        exception_handler("invalid_input_format")
+    
+    #proxy port
+    proxy_port = input("proxy port: ")
+    #check if port entered is a valid number; if not, throw exception
+    if proxy_port.isdigit() == False:
+        exception_handler("invalid_input_format")
+    
+    #proxy username&password
+    proxy_user_in = input("proxy username(if not required; leave blank):")
+    proxy_user = None
+    proxy_password = None
+    if proxy_user_in != "":
+        #url-escape special characters
+        proxy_user=urllib.parse.quote(proxy_user_in)
+        #password
+        proxy_password_in = input("Proxy password:")
+        #check that input is not empty; else throw error
+        if proxy_password_in == "":
+            print("password can not be blank")
+            exception_handler("invalid_input_format")
+        #url-escape special characters
+        proxy_password = urllib.parse.quote(proxy_password_in)
+    
+    #create proxy object
+    proxy_obj = Proxy()
+    proxy_obj.create_proxy(proxy_type, proxy_ip, proxy_port, 
+                           proxy_user, proxy_password)
+    save_proxy(proxy_obj,name)
     sys.exit(0)
 
 #function: loads a proxy configuration
@@ -160,18 +260,35 @@ def parse_commands():
 #               ---class definitions---
 
 #class: stores a proxy configuration as an object
-class proxy():
+class Proxy():
     
+    #   ---variables---
+    proxy_type = None
+    proxy_ip = None
+    proxy_port = None
+    proxy_user = None
+    proxy_password = None
+
+    #   ---functions---
+
     #function: constructor; initializes this instance from lines of config file
     #param: lines: lines from config file; if none: nothing is done; You need to call
     #                                                                create_proxy
     def __init__(self, lines=None):
+        #only do anything is lines are not None
         if lines is not None:
             print("sth")
-    #function: init
-    def create_proxy(proxy_type, proxy_ip, proxy_port, 
-                     proxy_user=None, proxy_password=None):
-        print("not implemented")
+    
+    #function: init from variables
+    #param type ip port password
+    def create_proxy(self, proxy_type, proxy_ip, proxy_port, 
+                     proxy_user = None, proxy_password = None):
+        self.proxy_type = proxy_type
+        self.proxy_ip = proxy_ip
+        self.proxy_port = proxy_port
+        self.proxy_user = proxy_user
+        self.proxy_password = proxy_password
+
 
 #               ---program execution---
 
