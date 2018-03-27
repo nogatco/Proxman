@@ -31,11 +31,12 @@ def print_usage():
 
 #function: handles and prints exceptions
 #param: exeption
-#valid exeptions:   config_file_not_found
+#valid exeptions:   file_not_found
 #                   permission_denied
 #                   invalid_name
 #                   invalid_input_format
 #                   name_taken
+#                   parameter missinf
 def exception_handler(exception="unknown"):
     if exception=="config_file_not_found":
         print("config file not found. run install command again")
@@ -49,6 +50,9 @@ def exception_handler(exception="unknown"):
         print("input format is invalid.")
     elif exception=="name_taken":
         print("this name is already taken. Choose a different one.")
+    elif exception=="parameter_missing":
+        print("missing parameter. invalid usage.")
+        print_usage()
     else:
         print("unknown exeption: ", exception)
     sys.exit(1)
@@ -57,9 +61,13 @@ def exception_handler(exception="unknown"):
 
 #function: creates a file 
 #params: fname: filename&path
-def create_file(fname):
-    fi = open(fname, 'a')
-    fi.close()
+def create_file(fname,sudo=False):
+    if sudo == True:
+        os.system("sudo touch "+fname)
+    else:
+        fi = open(fname, 'a')
+        fi.close()
+    
 
 #function: prepend some text to a file
 #params: fname: file name&path
@@ -115,20 +123,25 @@ def install():
         if os.path.exists("/etc/apt"):  # apt is installed
             #if exists back up apt.conf
             if os.path.exists("/etc/apt/apt.conf"):
-                os.system("mv  /etc/apt/apt.conf /etc/apt/apt.conf.back")
+                os.system("sudo mv  /etc/apt/apt.conf /etc/apt/apt.conf.back")
             #create blank apt.conf
-            create_file("/etc/apt/apt.conf")
+            create_file("/etc/apt/apt.conf", True)
             print("added apt.conf")
     except PermissionError:
         exception_handler("permisson_denied")
-
+    #these chowns are here, because sometimes the permissions get messed up.
+    #chmods for the same reason
+    os.system("sudo chown $(whoami) /etc/apt/apt.conf")
+    os.system("sudo chmod -R 777 /etc/apt/apt.conf")
     #create files
     #expanduser is used for relative paths
     create_file(os.path.expanduser("~/.proxmanrc"))
-
+    os.system("sudo chown $(whoami) ~/.proxmanrc")
+    os.system("sudo chmod 777 ~/.proxmanrc")
     #create proxy config storage folder
     os.system("mkdir ~/.proxman-proxies")
-
+    os.system("sudo chown $(whoami) ~/.proxman-proxies")
+    os.system("sudo chmod -R 777 ~/.proxman-proxies")
     #add to .zshrc & .bashrc
     proxmanrc_source="source ~/.proxmanrc \n"
     if os.path.exists(os.path.expanduser("~/.zshrc")):
@@ -137,7 +150,10 @@ def install():
     if os.path.exists(os.path.expanduser("~/.bashrc")):
         prepend_to_file(os.path.expanduser("~/.bashrc"), proxmanrc_source)
         print("added to .bashrc")
-    
+    #add +x to all files
+    os.system("chmod +x proxman.py")
+    os.system("chmod +x update-proxy-env-bash")
+    os.system("chmod +x update-proxy-env-zsh")
     print("sucess")
     sys.exit(0)
 
@@ -221,13 +237,75 @@ def create():
     proxy_obj = Proxy()
     proxy_obj.create_proxy(proxy_type, proxy_ip, proxy_port, 
                            proxy_user, proxy_password)
+    #save
     save_proxy(proxy_obj,name)
+    
     sys.exit(0)
 
 #function: loads a proxy configuration
 #params: none; uses sys.argv
 def load():
-    print("load not implemented. exiting.")
+    #check if parameter given
+    if len(sys.argv) < 3:
+        exception_handler("parameter_missing")
+
+    #fix ******* apt.conf permissions
+    os.system("sudo chmod 777 /etc/apt/")
+
+    #check if parameter is none; if true, remove proxy config
+    if sys.argv[2] == "none":
+        os.system('printf \'http_proxy=""\nexport https_proxy=""\nexport ftp_proxy=""\n\' > ~/.proxmanrc')
+        os.system("sudo rm -f /etc/apt/apt.conf")
+        os.system("sudo printf '' >/etc/apt/apt.conf")
+        sys.exit(0)
+    #check if file exists
+    if os.path.isfile(os.path.expanduser("~/.proxman-proxies/"+str(sys.argv[2]))) == False:
+        exception_handler("file_not_found")
+    #create proxy object
+    fi = open(os.path.expanduser("~/.proxman-proxies/"+str(sys.argv[2])),"r")
+    #read().splitlines is used instead of readlines, 
+    # in order to remove the \n at the end of lines
+    proxy_obj = Proxy(fi.read().splitlines())
+    fi.close()
+
+    #edit .proxmanrc
+    #craft data
+    data = "#!/usr/bin/env bash\n"
+    for pt in proxy_obj.proxy_type:
+        #still proxy_type contains '' as it's last item; 
+        #this line filters everything invalid.
+        if pt=="http" or pt=="https" or pt=="ftp":
+            data += "export "+pt+"_proxy='"+pt+"://"
+            if proxy_obj.proxy_user is not None:
+                data += proxy_obj.proxy_user+":"+proxy_obj.proxy_password+"@"
+            data += proxy_obj.proxy_ip+":"+str(proxy_obj.proxy_port)+"/'\n"
+    #write to file
+    fi = open(os.path.expanduser("~/.proxmanrc"),"w")
+    fi.write(data)
+    fi.close()
+    
+    #edit apt.conf
+    #craft data
+    #format Acquire::http::Proxy "http://user:pwd@ip:port/";
+    data = ""
+    for pt in proxy_obj.proxy_type:
+        if pt=="http" or pt=="https" or pt=="ftp":
+            data += 'Acquire::'+pt+'::Proxy "'+pt+'://'
+            if proxy_obj.proxy_user is not None:
+                data += proxy_obj.proxy_user+":"+proxy_obj.proxy_password+"@"
+            data += proxy_obj.proxy_ip+":"+str(proxy_obj.proxy_port)+'/";\n'
+    #escaping '%' for printf
+    data = data.replace("%","%%")
+    #writing changes
+    #this is done using a system call for super user privileges using sudo, 
+    #but not to mess up the privileges on other files, as calling the script as root
+    #would.
+    #printf is used, because echo is inconsistent with new lines
+    
+    os.system("sudo printf '"+data+"' >/etc/apt/apt.conf")
+
+    #set active-proxy: ~/.proxman-proxies/.active-proxy
+    os.system("echo " + sys.argv[2] + "> ~/.proxman-proxies/.active-proxy")
     sys.exit(0)
 
 
@@ -277,7 +355,16 @@ class Proxy():
     def __init__(self, lines=None):
         #only do anything is lines are not None
         if lines is not None:
-            print("sth")
+            self.proxy_type = str(lines[0]).split(" ")
+            self.proxy_ip = str(lines[1])
+            self.proxy_port = int(lines[2])
+            if len(lines) > 3:
+                self.proxy_user = str(lines[3])
+                self.proxy_password = str(lines[4])
+            else:
+                self.proxy_user = None
+                self.proxy_password = None
+                
     
     #function: init from variables
     #param type ip port password
