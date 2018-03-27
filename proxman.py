@@ -36,7 +36,7 @@ def print_usage():
 #                   invalid_name
 #                   invalid_input_format
 #                   name_taken
-#                   parameter missinf
+#                   parameter missing
 def exception_handler(exception="unknown"):
     if exception=="config_file_not_found":
         print("config file not found. run install command again")
