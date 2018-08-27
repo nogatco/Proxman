@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# (c) Péter Bohner; aka. nogatco
+# (c) xzvf aka. nogatco 
 # LICENSE GPL-3.0
 # PROXMAN is a tool to manage proxy servers via the command line.
 
